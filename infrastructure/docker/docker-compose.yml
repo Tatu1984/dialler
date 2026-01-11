@@ -1,0 +1,255 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # CockroachDB - Primary Database
+  # ============================================
+  cockroachdb:
+    image: cockroachdb/cockroach:v24.1.3
+    container_name: nexusdialer-cockroachdb
+    command: start-single-node --insecure --advertise-addr=cockroachdb
+    ports:
+      - "26257:26257"  # SQL
+      - "8080:8080"    # Admin UI
+    volumes:
+      - cockroachdb-data:/cockroach/cockroach-data
+    environment:
+      - COCKROACH_DATABASE=nexusdialer
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexusdialer-network
+
+  # Initialize CockroachDB
+  cockroachdb-init:
+    image: cockroachdb/cockroach:v24.1.3
+    container_name: nexusdialer-cockroachdb-init
+    command: >
+      sql --insecure --host=cockroachdb -e "
+        CREATE DATABASE IF NOT EXISTS nexusdialer;
+      "
+    depends_on:
+      cockroachdb:
+        condition: service_healthy
+    networks:
+      - nexusdialer-network
+
+  # ============================================
+  # Redis - Cache & Pub/Sub
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    container_name: nexusdialer-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexusdialer-network
+
+  # ============================================
+  # Kafka - Event Bus (using Redpanda for simplicity)
+  # ============================================
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.1
+    container_name: nexusdialer-redpanda
+    command:
+      - redpanda
+      - start
+      - --smp
+      - '1'
+      - --reserve-memory
+      - 0M
+      - --overprovisioned
+      - --node-id
+      - '0'
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+      - --pandaproxy-addr
+      - 0.0.0.0:8082
+      - --advertise-pandaproxy-addr
+      - localhost:8082
+    ports:
+      - "9092:9092"   # Kafka API
+      - "8082:8082"   # Pandaproxy
+      - "9644:9644"   # Admin API
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexusdialer-network
+
+  # Redpanda Console (Kafka UI)
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v2.7.0
+    container_name: nexusdialer-redpanda-console
+    ports:
+      - "8084:8080"
+    environment:
+      - KAFKA_BROKERS=redpanda:29092
+    depends_on:
+      - redpanda
+    networks:
+      - nexusdialer-network
+
+  # ============================================
+  # TimescaleDB - Time-Series Metrics
+  # ============================================
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: nexusdialer-timescaledb
+    ports:
+      - "5433:5432"
+    environment:
+      - POSTGRES_USER=nexusdialer
+      - POSTGRES_PASSWORD=nexusdialer
+      - POSTGRES_DB=nexusdialer_metrics
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexusdialer -d nexusdialer_metrics"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexusdialer-network
+
+  # ============================================
+  # Meilisearch - Full-Text Search
+  # ============================================
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    container_name: nexusdialer-meilisearch
+    ports:
+      - "7700:7700"
+    environment:
+      - MEILI_ENV=development
+      - MEILI_MASTER_KEY=nexusdialer-dev-key
+    volumes:
+      - meilisearch-data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexusdialer-network
+
+  # ============================================
+  # Qdrant - Vector Database (for AI embeddings)
+  # ============================================
+  qdrant:
+    image: qdrant/qdrant:v1.12.1
+    container_name: nexusdialer-qdrant
+    ports:
+      - "6333:6333"   # REST API
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexusdialer-network
+
+  # ============================================
+  # MinIO - S3-Compatible Object Storage
+  # ============================================
+  minio:
+    image: minio/minio:latest
+    container_name: nexusdialer-minio
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexusdialer-network
+
+  # Initialize MinIO buckets
+  minio-init:
+    image: minio/mc:latest
+    container_name: nexusdialer-minio-init
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+        sleep 5;
+        mc alias set myminio http://minio:9000 minioadmin minioadmin;
+        mc mb myminio/recordings --ignore-existing;
+        mc mb myminio/uploads --ignore-existing;
+        mc mb myminio/transcriptions --ignore-existing;
+        mc anonymous set public myminio/uploads;
+        exit 0;
+      "
+    networks:
+      - nexusdialer-network
+
+  # ============================================
+  # Mailhog - Email Testing
+  # ============================================
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: nexusdialer-mailhog
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+    networks:
+      - nexusdialer-network
+
+  # ============================================
+  # FreeSWITCH - PBX (Development)
+  # ============================================
+  # Note: FreeSWITCH requires more complex setup
+  # This is a placeholder - will be expanded later
+  # freeswitch:
+  #   build: ../telephony/freeswitch/docker
+  #   container_name: nexusdialer-freeswitch
+  #   ports:
+  #     - "5060:5060/udp"   # SIP UDP
+  #     - "5060:5060/tcp"   # SIP TCP
+  #     - "8021:8021"       # ESL
+  #     - "16384-16484:16384-16484/udp"  # RTP
+  #   volumes:
+  #     - ../telephony/freeswitch/conf:/usr/local/freeswitch/conf
+  #   networks:
+  #     - nexusdialer-network
+
+volumes:
+  cockroachdb-data:
+  redis-data:
+  redpanda-data:
+  timescaledb-data:
+  meilisearch-data:
+  qdrant-data:
+  minio-data:
+
+networks:
+  nexusdialer-network:
+    driver: bridge

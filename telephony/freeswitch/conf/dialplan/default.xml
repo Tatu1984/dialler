@@ -1,0 +1,68 @@
+<include>
+  <context name="default">
+
+    <!-- Agent Extension Handler -->
+    <extension name="agent_extension">
+      <condition field="destination_number" expression="^(1\d{3})$">
+        <action application="set" data="ringback=${us-ring}"/>
+        <action application="set" data="transfer_ringback=${us-ring}"/>
+        <action application="set" data="call_timeout=30"/>
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="set" data="continue_on_fail=true"/>
+        <action application="bridge" data="user/$1@${domain_name}"/>
+      </condition>
+    </extension>
+
+    <!-- Outbound Call via Carrier -->
+    <extension name="outbound_calls">
+      <condition field="destination_number" expression="^(\d{10,15})$">
+        <action application="set" data="effective_caller_id_name=${outbound_caller_id_name}"/>
+        <action application="set" data="effective_caller_id_number=${outbound_caller_id_number}"/>
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="set" data="call_timeout=60"/>
+        <action application="set" data="originate_timeout=60"/>
+        <!-- Record all outbound calls -->
+        <action application="set" data="RECORD_STEREO=true"/>
+        <action application="set" data="recording_follow_transfer=true"/>
+        <action application="record_session" data="/var/lib/freeswitch/recordings/${uuid}.wav"/>
+        <!-- Send to carrier -->
+        <action application="bridge" data="sofia/gateway/${default_gateway}/$1"/>
+      </condition>
+    </extension>
+
+    <!-- Conference/Queue Hold -->
+    <extension name="queue_hold">
+      <condition field="destination_number" expression="^queue_(\d+)$">
+        <action application="answer"/>
+        <action application="set" data="queue_id=$1"/>
+        <action application="playback" data="ivr/ivr-hold_connect_call.wav"/>
+        <action application="fifo" data="queue_$1 in"/>
+      </condition>
+    </extension>
+
+    <!-- Transfer to Agent from Queue -->
+    <extension name="queue_to_agent">
+      <condition field="destination_number" expression="^queue_agent_(1\d{3})$">
+        <action application="set" data="hangup_after_bridge=true"/>
+        <action application="bridge" data="user/$1@${domain_name}"/>
+      </condition>
+    </extension>
+
+    <!-- Voicemail -->
+    <extension name="voicemail">
+      <condition field="destination_number" expression="^vmain$">
+        <action application="answer"/>
+        <action application="voicemail" data="check default ${domain_name} ${caller_id_number}"/>
+      </condition>
+    </extension>
+
+    <!-- Echo Test -->
+    <extension name="echo">
+      <condition field="destination_number" expression="^9196$">
+        <action application="answer"/>
+        <action application="echo"/>
+      </condition>
+    </extension>
+
+  </context>
+</include>

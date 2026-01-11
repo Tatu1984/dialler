@@ -1,0 +1,37 @@
+<include>
+  <context name="public">
+
+    <!-- Inbound DID Handler -->
+    <extension name="inbound_did">
+      <condition field="destination_number" expression="^(\d{10,11})$">
+        <action application="set" data="domain_name=nexusdialer.local"/>
+        <action application="set" data="hangup_after_bridge=true"/>
+        <!-- Record inbound calls -->
+        <action application="set" data="RECORD_STEREO=true"/>
+        <action application="record_session" data="/var/lib/freeswitch/recordings/${uuid}.wav"/>
+        <!-- Route to IVR or queue based on DID configuration -->
+        <action application="transfer" data="route_inbound XML default"/>
+      </condition>
+    </extension>
+
+    <!-- Route Inbound Calls -->
+    <extension name="route_inbound">
+      <condition field="destination_number" expression="^route_inbound$">
+        <!-- Default: send to main queue -->
+        <action application="answer"/>
+        <action application="playback" data="ivr/ivr-welcome.wav"/>
+        <action application="fifo" data="main_queue in"/>
+      </condition>
+    </extension>
+
+    <!-- IVR Entry Point -->
+    <extension name="ivr_main">
+      <condition field="destination_number" expression="^ivr_main$">
+        <action application="answer"/>
+        <action application="sleep" data="1000"/>
+        <action application="ivr" data="main_ivr"/>
+      </condition>
+    </extension>
+
+  </context>
+</include>
