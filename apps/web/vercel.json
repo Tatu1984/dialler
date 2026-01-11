@@ -1,6 +1,6 @@
 {
-  "buildCommand": "cd ../.. && pnpm install && pnpm build --filter=@nexusdialer/web",
+  "installCommand": "npm i -g pnpm@10.23.0 && cd ../.. && pnpm install",
+  "buildCommand": "cd ../.. && pnpm build --filter=@nexusdialer/web",
   "outputDirectory": ".next",
-  "framework": "nextjs",
-  "installCommand": "echo 'skip'"
+  "framework": "nextjs"
 }
