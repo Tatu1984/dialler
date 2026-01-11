@@ -1,4 +1,6 @@
 {
-  "$schema": "https://openapi.vercel.sh/vercel.json",
-  "framework": "nextjs"
+  "buildCommand": "cd ../.. && pnpm install && pnpm build --filter=@nexusdialer/web",
+  "outputDirectory": ".next",
+  "framework": "nextjs",
+  "installCommand": "echo 'skip'"
 }
